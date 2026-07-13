@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Raffle Admin</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const STORAGE_KEY = "raffle-night-data";
+const SCRIPT_URL_KEY = "raffle-script-url";
+const CLOSE_DATE_KEY = "raffle-close-date";
+
+const PALETTE = {
+  navy: "#161B33",
+  navyCard: "#212A4E",
+  navyCard2: "#293463",
+  gold: "#E8B84B",
+  red: "#D6543F",
+  cream: "#F5EEDC",
+  teal: "#3FA796",
+};
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function buildReelItems(values, target = 24) {
+  if (values.length === 0) return [];
+  const out = [];
+  while (out.length < target) out.push(...shuffled(values));
+  return out.slice(0, target);
+}
+
+function loadLocal(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function saveLocal(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.error("save failed", e);
+  }
+}
+
+function ReelWindow({ items, spinning, resultLabel, label, accent, locking }) {
+  const trackItems = spinning && items.length > 0 ? [...items, ...items] : [];
+  const duration = Math.max(items.length * 0.22, 1.4);
+  return (
+    <div className="flex-1 flex flex-col items-center gap-2 min-w-0">
+      <span className="text-[10px] uppercase tracking-[0.3em] font-semibold" style={{ color: accent }}>
+        {label}
+      </span>
+      <div
+        className="w-full rounded-lg overflow-hidden relative"
+        style={{ height: 76, background: PALETTE.navy, border: `2px solid ${accent}`, boxShadow: `inset 0 0 18px rgba(0,0,0,0.6)` }}
+      >
+        <div className="absolute inset-x-0 top-0 h-4 pointer-events-none z-10" style={{ background: `linear-gradient(${PALETTE.navy}, transparent)` }} />
+        <div className="absolute inset-x-0 bottom-0 h-4 pointer-events-none z-10" style={{ background: `linear-gradient(transparent, ${PALETTE.navy})` }} />
+        {spinning ? (
+          <div className="reel-track" style={{ animationDuration: `${duration}s` }}>
+            {trackItems.map((n, i) => (
+              <div key={i} className="flex items-center justify-center display-font font-semibold text-lg px-3 text-center truncate" style={{ height: 76, color: PALETTE.cream }}>
+                {n}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className={`flex items-center justify-center h-full display-font font-semibold text-xl sm:text-2xl px-3 text-center ${locking ? "reel-clunk" : ""}`} style={{ color: accent }}>
+            {resultLabel || "—"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TicketStub({ children, className = "" }) {
+  return (
+    <div className={`relative ${className}`}>
+      <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full" style={{ background: PALETTE.navy }} />
+      <div className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full" style={{ background: PALETTE.navy }} />
+      {children}
+    </div>
+  );
+}
+
+function App() {
+  const initial = loadLocal(STORAGE_KEY, {});
+  const [prizes, setPrizes] = useState(initial.prizes || []);
+  const [participants, setParticipants] = useState(
+    (initial.participants || []).map((p) => ({ paid: true, ...p }))
+  );
+  const [drawHistory, setDrawHistory] = useState(initial.drawHistory || []);
+  const [preventRepeat, setPreventRepeat] = useState(
+    initial.preventRepeat !== undefined ? initial.preventRepeat : true
+  );
+
+  const [prizeName, setPrizeName] = useState("");
+  const [prizeDonor, setPrizeDonor] = useState("");
+  const [personName, setPersonName] = useState("");
+  const [personTickets, setPersonTickets] = useState("");
+  const [participantError, setParticipantError] = useState("");
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState("");
+
+  const [scriptUrl, setScriptUrl] = useState(loadLocal(SCRIPT_URL_KEY, ""));
+  const [closeDate, setCloseDate] = useState(loadLocal(CLOSE_DATE_KEY, ""));
+  const [syncMsg, setSyncMsg] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [publishMsg, setPublishMsg] = useState("");
+  const [publishing, setPublishing] = useState(false);
+
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [stage, setStage] = useState("idle");
+  const [pendingWinner, setPendingWinner] = useState(null);
+  const [pendingPrize, setPendingPrize] = useState(null);
+  const [result, setResult] = useState(null);
+  const [confettiKey, setConfettiKey] = useState(0);
+  const [error, setError] = useState("");
+  const [leverPulled, setLeverPulled] = useState(false);
+  const [reelNameItems, setReelNameItems] = useState([]);
+  const [reelPrizeItems, setReelPrizeItems] = useState([]);
+
+  useEffect(() => {
+    saveLocal(STORAGE_KEY, { prizes, participants, drawHistory, preventRepeat });
+  }, [prizes, participants, drawHistory, preventRepeat]);
+
+  useEffect(() => {
+    saveLocal(SCRIPT_URL_KEY, scriptUrl);
+  }, [scriptUrl]);
+
+  useEffect(() => {
+    saveLocal(CLOSE_DATE_KEY, closeDate);
+  }, [closeDate]);
+
+  useEffect(() => {
+    if (!scriptUrl) return;
+    syncFromForm();
+    const interval = setInterval(() => {
+      syncFromForm();
+    }, 60000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptUrl]);
+
+  useEffect(() => {
+    if (!scriptUrl) return;
+    const timeout = setTimeout(() => {
+      publishToPublicSite();
+    }, 1800);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptUrl, prizes, totalTickets, closeDate]);
+
+  const paidParticipants = participants.filter((p) => p.paid);
+  const unpaidCount = participants.length - paidParticipants.length;
+  const totalTickets = paidParticipants.reduce((s, p) => s + p.tickets, 0);
+  const pot = totalTickets * 1;
+  const availablePrizes = prizes.filter((p) => !p.awarded);
+  const ticketPool = paidParticipants.flatMap((p) => Array.from({ length: p.tickets }, () => p));
+
+  function addPrize(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!prizeName.trim()) return;
+    setPrizes((prev) => [...prev, { id: uid(), name: prizeName.trim(), donor: prizeDonor.trim() || "Anonymous", awarded: false }]);
+    setPrizeName("");
+    setPrizeDonor("");
+  }
+
+  function removePrize(id) {
+    setPrizes((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  function mergeRows(rows) {
+    let added = 0;
+    let skipped = 0;
+    setParticipants((prev) => {
+      let next = [...prev];
+      rows.forEach((row) => {
+        const rawName = (row.name || "").trim();
+        const count = parseInt(row.tickets, 10);
+        if (!rawName || isNaN(count) || count < 1) {
+          skipped++;
+          return;
+        }
+        const existing = next.find((p) => p.name.toLowerCase() === rawName.toLowerCase());
+        if (existing) {
+          next = next.map((p) =>
+            p.id === existing.id
+              ? { ...p, tickets: count, contact: row.contact || p.contact }
+              : p
+          );
+        } else {
+          next = [...next, { id: uid(), name: rawName, tickets: count, contact: row.contact || "", paid: false }];
+        }
+        added++;
+      });
+      return next;
+    });
+    return { added, skipped };
+  }
+
+  function addParticipant(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const name = personName.trim();
+    const count = parseInt(personTickets, 10);
+    if (!name && (!personTickets || count < 1)) {
+      setParticipantError("Enter a name and a ticket count.");
+      return;
+    }
+    if (!name) {
+      setParticipantError("Enter a name.");
+      return;
+    }
+    if (!personTickets || isNaN(count) || count < 1) {
+      setParticipantError("Enter how many tickets (1 or more).");
+      return;
+    }
+    setParticipantError("");
+    setParticipants((prev) => {
+      const existing = prev.find((p) => p.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        return prev.map((p) => (p.id === existing.id ? { ...p, tickets: p.tickets + count } : p));
+      }
+      return [...prev, { id: uid(), name, tickets: count, paid: true }];
+    });
+    setPersonName("");
+    setPersonTickets("");
+  }
+
+  function togglePaid(id) {
+    setParticipants((prev) => prev.map((p) => (p.id === id ? { ...p, paid: !p.paid } : p)));
+  }
+
+  function removeParticipant(id) {
+    setParticipants((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  function importFormEntries(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const lines = importText.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) {
+      setImportError("Paste in some rows first.");
+      return;
+    }
+    const rows = [];
+    let malformed = 0;
+    lines.forEach((line) => {
+      const parts = line.split(",").map((s) => s.trim());
+      if (parts.length < 2 || parts[0].toLowerCase() === "name") {
+        malformed++;
+        return;
+      }
+      rows.push({ name: parts[0], tickets: parts[1], contact: parts[2] || "" });
+    });
+    const { added, skipped } = mergeRows(rows);
+    setImportText("");
+    setImportError(
+      skipped + malformed > 0
+        ? `Added ${added} row${added === 1 ? "" : "s"}, skipped ${skipped + malformed} that didn't look right.`
+        : `Added ${added} row${added === 1 ? "" : "s"}.`
+    );
+  }
+
+  async function syncFromForm() {
+    if (!scriptUrl) {
+      setSyncMsg("Paste your Apps Script URL above first.");
+      return;
+    }
+    setSyncing(true);
+    setSyncMsg("");
+    try {
+      const res = await fetch(scriptUrl + "?resource=formEntries");
+      const rows = await res.json();
+      if (!Array.isArray(rows)) throw new Error("Unexpected response");
+      const { added, skipped } = mergeRows(rows);
+      setSyncMsg(`Synced ${added} row${added === 1 ? "" : "s"} from the form.${skipped ? ` Skipped ${skipped}.` : ""}`);
+    } catch (err) {
+      setSyncMsg("Couldn't reach the Apps Script URL — double check it's deployed and accessible to Anyone.");
+    }
+    setSyncing(false);
+  }
+
+  async function publishToPublicSite() {
+    if (!scriptUrl) {
+      setPublishMsg("Paste your Apps Script URL above first.");
+      return;
+    }
+    setPublishing(true);
+    setPublishMsg("");
+    try {
+      const res = await fetch(scriptUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          resource: "publish",
+          prizes: prizes.map((p) => ({ name: p.name, donor: p.donor, awarded: p.awarded })),
+          settings: { ticketsSold: totalTickets, closeDate },
+        }),
+      });
+      const data = await res.json();
+      setPublishMsg(data.ok ? "Published to the public site." : "Something went wrong publishing.");
+    } catch (err) {
+      setPublishMsg("Couldn't reach the Apps Script URL.");
+    }
+    setPublishing(false);
+  }
+
+  function pullLever() {
+    setLeverPulled(true);
+    setTimeout(() => setLeverPulled(false), 400);
+    runDraw();
+  }
+
+  function runDraw() {
+    setError("");
+    if (isDrawing) return;
+    if (ticketPool.length === 0) {
+      setError("Add some ticket sales before drawing.");
+      return;
+    }
+    if (availablePrizes.length === 0) {
+      setError("No prizes left to award.");
+      return;
+    }
+    setResult(null);
+    setIsDrawing(true);
+
+    const chosenTicketHolder = ticketPool[Math.floor(Math.random() * ticketPool.length)];
+    const chosenPrize = availablePrizes[Math.floor(Math.random() * availablePrizes.length)];
+
+    setPendingWinner(chosenTicketHolder);
+    setPendingPrize(chosenPrize);
+    const uniqueNames = Array.from(new Set(paidParticipants.map((p) => p.name)));
+    setReelNameItems(buildReelItems(uniqueNames, 24));
+    setReelPrizeItems(buildReelItems(availablePrizes.map((p) => p.name), 24));
+    setStage("spinning");
+
+    const nameSpinMs = 1700;
+    const prizeSpinExtraMs = 1100;
+    const settleMs = 700;
+
+    setTimeout(() => setStage("nameLocked"), nameSpinMs);
+
+    setTimeout(() => {
+      setStage("done");
+      setIsDrawing(false);
+      setResult({ winner: chosenTicketHolder, prize: chosenPrize });
+      setConfettiKey((k) => k + 1);
+      setPrizes((prev) => prev.map((p) => (p.id === chosenPrize.id ? { ...p, awarded: true } : p)));
+      setDrawHistory((prev) => [
+        {
+          id: uid(),
+          winnerName: chosenTicketHolder.name,
+          prizeName: chosenPrize.name,
+          donor: chosenPrize.donor,
+          time: new Date().toLocaleString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+        ...prev,
+      ]);
+      if (preventRepeat) {
+        setParticipants((prev) => prev.filter((p) => p.id !== chosenTicketHolder.id));
+      }
+    }, nameSpinMs + prizeSpinExtraMs + settleMs);
+  }
+
+  const confettiPieces = Array.from({ length: 26 });
+
+  return (
+    <div className="min-h-screen w-full" style={{ background: `radial-gradient(1200px 600px at 50% -10%, ${PALETTE.navyCard} 0%, ${PALETTE.navy} 60%)`, fontFamily: "'Inter', ui-sans-serif, system-ui, sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+        .display-font { font-family: 'Fredoka', ui-sans-serif, system-ui, sans-serif; }
+        .mono-font { font-family: 'Space Mono', ui-monospace, monospace; }
+        @keyframes confetti-fall { 0% { transform: translateY(-20px) rotate(0deg); opacity: 1; } 100% { transform: translateY(320px) rotate(540deg); opacity: 0; } }
+        .confetti-piece { animation: confetti-fall 1.8s ease-in forwards; }
+        @keyframes pop-in { 0% { transform: scale(0.85); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .pop-in { animation: pop-in 0.35s ease-out; }
+        @keyframes reel-scroll { 0% { transform: translateY(0); } 100% { transform: translateY(-50%); } }
+        .reel-track { display: flex; flex-direction: column; animation-name: reel-scroll; animation-timing-function: linear; animation-iteration-count: infinite; }
+        @keyframes reel-clunk { 0% { transform: scale(1.15); } 40% { transform: scale(0.96); } 70% { transform: scale(1.04); } 100% { transform: scale(1); } }
+        .reel-clunk { animation: reel-clunk 0.35s ease-out; }
+        @keyframes lever-pull { 0% { transform: rotate(0deg); } 45% { transform: rotate(28deg); } 100% { transform: rotate(0deg); } }
+        .lever-pull { animation: lever-pull 0.4s ease-in-out; transform-origin: top center; }
+        @keyframes light-chase { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+        .marquee-light { animation: light-chase 1s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .reel-track, .lever-pull, .marquee-light, .confetti-piece, .pop-in { animation: none !important; }
+        }
+      `}</style>
+
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+        <header className="flex flex-col items-center text-center mb-8">
+          <img src="logo.jpg" alt="Forest Hall FC Supernovas" style={{ width: 90, height: 90, objectFit: "contain", marginBottom: 10 }} />
+          <div className="uppercase tracking-[0.3em] text-xs font-semibold mb-2" style={{ color: PALETTE.teal }}>Admin</div>
+          <h1 className="display-font text-5xl sm:text-6xl font-semibold" style={{ color: PALETTE.cream, letterSpacing: "0.01em" }}>Raffle Night</h1>
+          <div className="flex gap-6 mt-5 flex-wrap justify-center">
+            <div className="rounded-xl px-5 py-3 flex flex-col items-center" style={{ background: PALETTE.navyCard, border: `1px solid ${PALETTE.navyCard2}` }}>
+              <span className="mono-font text-2xl font-bold" style={{ color: PALETTE.gold }}>£{pot}</span>
+              <span className="text-[11px] uppercase tracking-wider opacity-70" style={{ color: PALETTE.cream }}>Pot ({totalTickets} tickets)</span>
+            </div>
+            <div className="rounded-xl px-5 py-3 flex flex-col items-center" style={{ background: PALETTE.navyCard, border: `1px solid ${PALETTE.navyCard2}` }}>
+              <span className="mono-font text-2xl font-bold" style={{ color: PALETTE.teal }}>{availablePrizes.length}</span>
+              <span className="text-[11px] uppercase tracking-wider opacity-70" style={{ color: PALETTE.cream }}>Prizes left</span>
+            </div>
+            <div className="rounded-xl px-5 py-3 flex flex-col items-center" style={{ background: PALETTE.navyCard, border: `1px solid ${PALETTE.navyCard2}` }}>
+              <span className="mono-font text-2xl font-bold" style={{ color: PALETTE.red }}>{participants.length}</span>
+              <span className="text-[11px] uppercase tracking-wider opacity-70" style={{ color: PALETTE.cream }}>Players</span>
+            </div>
+          </div>
+        </header>
+
+        {/* Settings */}
+        <details className="rounded-2xl p-5 mb-8" style={{ background: PALETTE.navyCard, border: `1px solid ${PALETTE.navyCard2}` }}>
+          <summary className="cursor-pointer font-semibold" style={{ color: PALETTE.cream }}>⚙️ Settings — Google Form connection</summary>
+          <div className="mt-4 flex flex-col gap-3">
+            <p className="text-xs opacity-70" style={{ color: PALETTE.cream }}>
+              Once a URL is set below, this page syncs new form entries automatically every minute, and publishes your prizes, ticket count and close date to the public site a couple of seconds after any change. The buttons let you trigger either right away.
+            </p>
+            <label className="text-xs opacity-70" style={{ color: PALETTE.cream }}>Apps Script Web app URL</label>
+            <input
+              value={scriptUrl}
+              onChange={(e) => setScriptUrl(e.target.value)}
+              placeholder="https://script.google.com/macros/s/..."
+              className="rounded-lg px-3 py-2 text-sm outline-none"
+              style={{ background: PALETTE.navy, color: PALETTE.cream, border: `1px solid ${PALETTE.navyCard2}` }}
+            />
+            <label className="text-xs opacity-70 mt-1" style={{ color: PALETTE.cream }}>Ticket sales close</label>
+            <input
+              type="datetime-local"
+              value={closeDate}
+              onChange={(e) => setCloseDate(e.target.value)}
+              className="rounded-lg px-3 py-2 text-sm outline-none"
+              style={{ background: PALETTE.navy, color: PALETTE.cream, border: `1px solid ${PALETTE.navyCard2}` }}
+            />
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={syncFromForm}
+                disabled={syncing}
+                className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                style={{ background: PALETTE.teal, color: PALETTE.navy }}
+              >
+                {syncing ? "Syncing…" : "Sync now"}
+              </button>
+              <button
+                onClick={publishToPublicSite}
+                disabled={publishing}
+                className="rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                style={{ background: PALETTE.gold, color: PALETTE.navy }}
+              >
+                {publishing ? "Publishing…" : "Publish now"}
+              </button>
+            </div>
+            {syncMsg && <p className="text-xs" style={{ color: PALETTE.cream }}>{syncMsg}</p>}
+            {publishMsg && <p className="text-xs" style={{ color: PALETTE.cream }}>{publishMsg}</p>}
+          </div>
+        </details>
+
+        {/* Fruit Machine */}
+        <section className="rounded-2xl p-5 sm:p-7 mb-10 relative overflow-hidden" style={{ background: `linear-gradient(180deg, ${PALETTE.navyCard2}, ${PALETTE.navyCard})`, border: `1px solid ${PALETTE.gold}44` }}>
+          {stage === "done" && confettiPieces.map((_, i) => (
+            <span key={`${confettiKey}-${i}`} className="confetti-piece absolute top-0 rounded-sm z-20" style={{ left: `${(i * 37) % 100}%`, width: 8, height: 8, background: [PALETTE.gold, PALETTE.red, PALETTE.teal, PALETTE.cream][i % 4], animationDelay: `${(i % 7) * 0.08}s` }} />
+          ))}
+
+          <div className="flex justify-between px-1 mb-4">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <span key={i} className="marquee-light w-2 h-2 rounded-full" style={{ background: i % 2 === 0 ? PALETTE.gold : PALETTE.red, animationDelay: `${i * 0.08}s` }} />
+            ))}
+          </div>
+
+          <div className="flex items-stretch gap-3 sm:gap-5">
+            <div className="flex-1 rounded-xl p-4 sm:p-6" style={{ background: PALETTE.navy, border: `3px solid ${PALETTE.navyCard2}` }}>
+              <div className="flex gap-3 sm:gap-5">
+                <ReelWindow label="Name" accent={PALETTE.gold} spinning={stage === "spinning"} locking={stage === "nameLocked"} items={reelNameItems} resultLabel={stage === "nameLocked" || stage === "done" ? pendingWinner?.name : null} />
+                <ReelWindow label="Prize" accent={PALETTE.teal} spinning={stage === "spinning" || stage === "nameLocked"} locking={stage === "done"} items={reelPrizeItems} resultLabel={stage === "done" ? pendingPrize?.name : null} />
+              </div>
+
+              {stage === "idle" && !result && (
+                <p className="text-center text-sm mt-4" style={{ color: PALETTE.cream }}>
+                  {ticketPool.length === 0 ? "Add ticket sales, then pull the lever." : `${ticketPool.length} ticket${ticketPool.length === 1 ? "" : "s"} in play, ${availablePrizes.length} prize${availablePrizes.length === 1 ? "" : "s"} up for grabs.`}
+                </p>
+              )}
+              {error && <p className="text-center text-sm mt-3" style={{ color: PALETTE.red }}>{error}</p>}
+
+              {stage === "done" && result && (
+                <div className="flex flex-col items-center gap-3 mt-5 pop-in">
+                  <TicketStub className="w-full max-w-sm">
+                    <div className="rounded-lg px-6 py-4 text-center border-dashed border-2" style={{ background: PALETTE.navyCard, borderColor: PALETTE.gold }}>
+                      <p className="text-sm" style={{ color: PALETTE.cream }}>
+                        <span className="font-semibold">{result.winner.name}</span> wins <span style={{ color: PALETTE.gold }}>{result.prize.name}</span>
+                      </p>
+                      <p className="text-xs opacity-70 mt-1" style={{ color: PALETTE.cream }}>donated by {result.prize.donor}</p>
+                    </div>
+                  </TicketStub>
+                  <button
+                    onClick={() => { setStage("idle"); setResult(null); setPendingWinner(null); setPendingPrize(null); }}
+                    disabled={availablePrizes.length === 0 || ticketPool.length === 0}
+                    className="display-font px-6 py-2 rounded-full font-semibold text-sm transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
+                    style={{ background: PALETTE.gold, color: PALETTE.navy }}
+                  >
+                    {availablePrizes.length === 0 ? "All prizes awarded" : "Draw next prize"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <button onClick={pullLever} disabled={isDrawing} className="flex flex-col items-center justify-start gap-1 px-2 sm:px-3 rounded-xl shrink-0 disabled:opacity-40" style={{ background: PALETTE.navyCard2 }} aria-label="Pull lever to draw">
+              <span className="w-3 h-3 rounded-full mt-3" style={{ background: PALETTE.navy, border: `2px solid ${PALETTE.gold}` }} />
+              <span className={`flex-1 w-2 rounded-full ${leverPulled ? "lever-pull" : ""}`} style={{ background: `linear-gradient(${PALETTE.gold}, ${PALETTE.navyCard2})`, minHeight: 60 }} />
+              <span className="w-7 h-7 rounded-full mb-3" style={{ background: PALETTE.red, boxShadow: `0 0 0 3px ${PALETTE.navy}` }} />
+            </button>
+          </div>
+
+          {stage === "idle" && !result && (
+            <div className="flex justify-center mt-5">
+              <button onClick={pullLever} disabled={isDrawing} className="display-font text-lg px-7 py-2.5 rounded-full font-semibold transition-transform hover:scale-105 active:scale-95 disabled:opacity-50" style={{ background: PALETTE.gold, color: PALETTE.navy }}>
+                Pull to draw
+              </button>
+            </div>
+          )}
+
+          <label className="flex items-center justify-center gap-2 mt-5 text-sm cursor-pointer select-none" style={{ color: PALETTE.cream }}>
+            <input type="checkbox" checked={preventRepeat} onChange={(e) => setPreventRepeat(e.target.checked)} style={{ accentColor: PALETTE.teal }} />
+            Stop players winning more than once
+          </label>
+        </section>
+
+        <div className="grid sm:grid-cols-2 gap-6 mb-10">
+          {/* Prizes */}
+          <section className="rounded-2xl p-5" style={{ background: PALETTE.navyCard }}>
+            <h2 className="display-font text-xl font-semibold flex items-center gap-2 mb-4" style={{ color: PALETTE.cream }}>🎁 Prizes</h2>
+            <div className="flex flex-col gap-2 mb-4">
+              <input value={prizeName} onChange={(e) => setPrizeName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addPrize()} placeholder="Prize name" className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background: PALETTE.navy, color: PALETTE.cream, border: `1px solid ${PALETTE.navyCard2}` }} />
+              <div className="flex gap-2">
+                <input value={prizeDonor} onChange={(e) => setPrizeDonor(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addPrize()} placeholder="Donated by" className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: PALETTE.navy, color: PALETTE.cream, border: `1px solid ${PALETTE.navyCard2}` }} />
+                <button type="button" onClick={() => addPrize()} className="rounded-lg px-4 flex items-center justify-center font-semibold" style={{ background: PALETTE.gold, color: PALETTE.navy }}>+</button>
+              </div>
+            </div>
+            <ul className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+              {prizes.length === 0 && <li className="text-sm opacity-60" style={{ color: PALETTE.cream }}>No prizes yet — add the first one above.</li>}
+              {prizes.map((p) => (
+                <li key={p.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm" style={{ background: PALETTE.navy, opacity: p.awarded ? 0.45 : 1, border: `1px solid ${PALETTE.navyCard2}` }}>
+                  <div>
+                    <p style={{ color: PALETTE.cream }} className="font-medium">{p.name} {p.awarded && <span style={{ color: PALETTE.teal }}>· awarded</span>}</p>
+                    <p className="text-xs opacity-60" style={{ color: PALETTE.cream }}>from {p.donor}</p>
+                  </div>
+                  <button onClick={() => removePrize(p.id)} className="opacity-60 hover:opacity-100 text-lg" style={{ color: PALETTE.red }}>×</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {/* Tickets */}
+          <section className="rounded-2xl p-5" style={{ background: PALETTE.navyCard }}>
+            <h2 className="display-font text-xl font-semibold flex items-center gap-2 mb-4" style={{ color: PALETTE.cream }}>🎟️ Ticket sales</h2>
+            <div className="flex gap-2 mb-4">
+              <input value={personName} onChange={(e) => { setPersonName(e.target.value); if (participantError) setParticipantError(""); }} onKeyDown={(e) => e.key === "Enter" && addParticipant()} placeholder="Name" className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: PALETTE.navy, color: PALETTE.cream, border: `1px solid ${PALETTE.navyCard2}` }} />
+              <input value={personTickets} onChange={(e) => { setPersonTickets(e.target.value.replace(/[^0-9]/g, "")); if (participantError) setParticipantError(""); }} onKeyDown={(e) => e.key === "Enter" && addParticipant()} placeholder="Tickets" inputMode="numeric" className="w-24 rounded-lg px-3 py-2 text-sm outline-none" style={{ background: PALETTE.navy, color: PALETTE.cream, border: `1px solid ${PALETTE.navyCard2}` }} />
+              <button type="button" onClick={() => addParticipant()} className="rounded-lg px-4 flex items-center justify-center font-semibold" style={{ background: PALETTE.red, color: PALETTE.cream }}>+</button>
+            </div>
+            {participantError && <p className="text-xs mb-3" style={{ color: PALETTE.red }}>{participantError}</p>}
+
+            <details className="mb-4 rounded-lg" style={{ background: PALETTE.navy, border: `1px solid ${PALETTE.navyCard2}` }}>
+              <summary className="text-xs cursor-pointer px-3 py-2 select-none" style={{ color: PALETTE.teal }}>Paste-in import (backup option)</summary>
+              <div className="px-3 pb-3 flex flex-col gap-2">
+                <p className="text-xs opacity-70" style={{ color: PALETTE.cream }}>One person per line: name, tickets — e.g. "Jane Smith, 3". Added as unpaid.</p>
+                <textarea value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={"Jane Smith, 3\nTom Baker, 1"} rows={4} className="rounded-lg px-3 py-2 text-sm outline-none font-mono" style={{ background: PALETTE.navyCard, color: PALETTE.cream, border: `1px solid ${PALETTE.navyCard2}` }} />
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => importFormEntries()} className="rounded-lg px-4 py-1.5 text-sm font-semibold" style={{ background: PALETTE.teal, color: PALETTE.navy }}>Import rows</button>
+                  {importError && <span className="text-xs" style={{ color: PALETTE.cream }}>{importError}</span>}
+                </div>
+              </div>
+            </details>
+
+            {unpaidCount > 0 && (
+              <p className="text-xs mb-3" style={{ color: PALETTE.gold }}>{unpaidCount} {unpaidCount === 1 ? "entry is" : "entries are"} waiting to be marked as paid.</p>
+            )}
+            <ul className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+              {participants.length === 0 && <li className="text-sm opacity-60" style={{ color: PALETTE.cream }}>No ticket sales yet.</li>}
+              {participants.slice().sort((a, b) => { if (a.paid !== b.paid) return a.paid ? 1 : -1; return b.tickets - a.tickets; }).map((p) => (
+                <li key={p.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm" style={{ background: PALETTE.navy, border: `1px solid ${p.paid ? PALETTE.navyCard2 : PALETTE.gold + "88"}`, opacity: p.paid ? 1 : 0.85 }}>
+                  <label className="flex items-center gap-2 cursor-pointer min-w-0">
+                    <input type="checkbox" checked={!!p.paid} onChange={() => togglePaid(p.id)} style={{ accentColor: PALETTE.teal }} />
+                    <span style={{ color: PALETTE.cream }} className="font-medium truncate">{p.name}</span>
+                    {p.contact && <span className="text-xs opacity-50 truncate" style={{ color: PALETTE.cream }}>· {p.contact}</span>}
+                    {!p.paid && <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0" style={{ background: `${PALETTE.gold}22`, color: PALETTE.gold }}>unpaid</span>}
+                  </label>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="mono-font text-xs" style={{ color: PALETTE.gold }}>{p.tickets} ticket{p.tickets === 1 ? "" : "s"} · £{p.tickets}</span>
+                    <button onClick={() => removeParticipant(p.id)} className="opacity-60 hover:opacity-100 text-lg" style={{ color: PALETTE.red }}>×</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
+
+        {drawHistory.length > 0 && (
+          <section className="rounded-2xl p-5 mb-4" style={{ background: PALETTE.navyCard }}>
+            <h2 className="display-font text-xl font-semibold mb-4" style={{ color: PALETTE.cream }}>Draw history</h2>
+            <ul className="flex flex-col gap-2">
+              {drawHistory.map((d) => (
+                <li key={d.id} className="flex items-center justify-between text-sm rounded-lg px-3 py-2" style={{ background: PALETTE.navy, border: `1px solid ${PALETTE.navyCard2}` }}>
+                  <span style={{ color: PALETTE.cream }}>
+                    <span className="font-semibold">{d.winnerName}</span> won <span style={{ color: PALETTE.gold }}>{d.prizeName}</span> <span className="opacity-60">(from {d.donor})</span>
+                  </span>
+                  <span className="mono-font text-xs opacity-50" style={{ color: PALETTE.cream }}>{d.time}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

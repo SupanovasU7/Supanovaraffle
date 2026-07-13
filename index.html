@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Supernova Raffle</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+  :root {
+    --navy: #161B33;
+    --navy-card: #212A4E;
+    --navy-card2: #293463;
+    --gold: #E8B84B;
+    --red: #D6543F;
+    --cream: #F5EEDC;
+    --teal: #3FA796;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: radial-gradient(1200px 600px at 50% -10%, var(--navy-card) 0%, var(--navy) 60%);
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    color: var(--cream);
+  }
+  .display-font { font-family: 'Fredoka', ui-sans-serif, system-ui, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 48px 20px 64px; }
+  header { text-align: center; margin-bottom: 36px; }
+  .logo {
+    width: 110px;
+    height: 110px;
+    object-fit: contain;
+    margin: 0 auto 14px;
+    display: block;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--teal);
+    margin-bottom: 8px;
+  }
+  h1 {
+    font-size: 42px;
+    font-weight: 600;
+    margin: 0 0 20px;
+  }
+  .cta-row {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .cta-row a {
+    text-decoration: none;
+    display: inline-block;
+    padding: 12px 26px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-family: 'Fredoka', sans-serif;
+  }
+  .cta-primary { background: var(--gold); color: var(--navy); }
+  .cta-secondary { background: var(--navy-card2); color: var(--cream); border: 1px solid rgba(232,184,75,0.4); }
+
+  .info-note {
+    text-align: center;
+    font-size: 13px;
+    opacity: 0.75;
+    max-width: 480px;
+    margin: 20px auto 0;
+    line-height: 1.5;
+  }
+
+  .stats-row {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 22px 0 4px;
+  }
+  .stat-pill {
+    background: var(--navy-card);
+    border: 1px solid var(--navy-card2);
+    border-radius: 999px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .stat-pill.gold { color: var(--gold); }
+  .stat-pill.closed { color: var(--red); }
+
+  .prizes-title {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 40px 0 16px;
+    text-align: center;
+  }
+  .prize-grid {
+    display: grid;
+    gap: 12px;
+  }
+  .prize-card {
+    background: var(--navy-card);
+    border: 1px solid var(--navy-card2);
+    border-radius: 16px;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .prize-card.awarded { opacity: 0.45; }
+  .prize-name { font-weight: 600; font-size: 16px; }
+  .prize-donor { font-size: 12px; opacity: 0.7; margin-top: 2px; }
+  .prize-badge {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: rgba(63,167,150,0.18);
+    color: var(--teal);
+    padding: 3px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .prize-badge.gone {
+    background: rgba(232,184,75,0.15);
+    color: var(--gold);
+  }
+  .empty, .loading {
+    text-align: center;
+    opacity: 0.6;
+    font-size: 14px;
+    padding: 24px 0;
+  }
+  footer {
+    text-align: center;
+    font-size: 12px;
+    opacity: 0.5;
+    margin-top: 48px;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <img src="logo.jpg" alt="Forest Hall FC Supernovas" class="logo" />
+      <div class="eyebrow">Roll up, roll up</div>
+      <h1 class="display-font">Supernova Raffle</h1>
+      <p style="max-width:440px; margin: 0 auto; opacity:0.85; line-height:1.6;">
+        Tickets are £1 each, in support of Forest Hall FC Supernovas Under 7s.
+        Fill in the form and pay via PayPal to enter.
+      </p>
+      <div class="cta-row">
+        <a class="cta-primary" href="https://forms.gle/LbSrJZA6jW3BgwH28" target="_blank" rel="noopener">Buy tickets</a>
+        <a class="cta-secondary" href="#prizes">See prizes</a>
+      </div>
+      <p class="info-note">
+        Tickets must be paid for before you're entered into the draw. Buyers must be 16 or over.
+      </p>
+      <div class="stats-row" id="statsRow"></div>
+    </header>
+
+    <h2 class="prizes-title" id="prizes">🎁 Prizes up for grabs</h2>
+    <div id="prizeList" class="prize-grid">
+      <p class="loading">Loading prizes…</p>
+    </div>
+
+    <footer>Good luck! Winners will be contacted directly.</footer>
+  </div>
+
+  <script>
+    // Paste the Apps Script Web app URL here once it's deployed.
+    const SCRIPT_URL = "";
+
+    async function loadPublicData() {
+      const prizeEl = document.getElementById("prizeList");
+      const statsEl = document.getElementById("statsRow");
+      if (!SCRIPT_URL) {
+        prizeEl.innerHTML = '<p class="empty">Prize list coming soon.</p>';
+        return;
+      }
+      try {
+        const res = await fetch(SCRIPT_URL + "?resource=public");
+        const data = await res.json();
+        const prizes = Array.isArray(data.prizes) ? data.prizes : [];
+        const settings = data.settings || {};
+
+        renderStats(statsEl, settings);
+
+        if (prizes.length === 0) {
+          prizeEl.innerHTML = '<p class="empty">Prize list coming soon.</p>';
+          return;
+        }
+        prizeEl.innerHTML = prizes
+          .map(
+            (p) => `
+          <div class="prize-card ${p.awarded ? "awarded" : ""}">
+            <div>
+              <div class="prize-name">${escapeHtml(p.name)}</div>
+              <div class="prize-donor">donated by ${escapeHtml(p.donor || "Anonymous")}</div>
+            </div>
+            <span class="prize-badge ${p.awarded ? "gone" : ""}">${p.awarded ? "Won" : "Up for grabs"}</span>
+          </div>`
+          )
+          .join("");
+      } catch (err) {
+        prizeEl.innerHTML = '<p class="empty">Couldn\'t load the prize list right now.</p>';
+      }
+    }
+
+    function renderStats(statsEl, settings) {
+      const pills = [];
+      if (settings.ticketsSold) {
+        pills.push(`<span class="stat-pill gold">🎟️ ${settings.ticketsSold} tickets sold</span>`);
+      }
+      if (settings.closeDate) {
+        const closeDateObj = new Date(settings.closeDate);
+        const isPast = !isNaN(closeDateObj) && closeDateObj.getTime() < Date.now();
+        const formatted = isNaN(closeDateObj)
+          ? escapeHtml(settings.closeDate)
+          : closeDateObj.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+        pills.push(
+          isPast
+            ? `<span class="stat-pill closed">Entries closed</span>`
+            : `<span class="stat-pill">⏰ Entries close ${formatted}</span>`
+        );
+      }
+      statsEl.innerHTML = pills.join("");
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement("div");
+      div.textContent = str == null ? "" : String(str);
+      return div.innerHTML;
+    }
+
+    loadPublicData();
+  </script>
+</body>
+</html>
