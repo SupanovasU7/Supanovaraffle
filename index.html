@@ -212,9 +212,6 @@
 
     function renderStats(statsEl, settings) {
       const pills = [];
-      if (settings.ticketsSold) {
-        pills.push(`<span class="stat-pill gold">🎟️ ${settings.ticketsSold} tickets sold</span>`);
-      }
       if (settings.closeDate) {
         const closeDateObj = new Date(settings.closeDate);
         const isPast = !isNaN(closeDateObj) && closeDateObj.getTime() < Date.now();
